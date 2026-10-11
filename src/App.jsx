@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SynthEngine } from './audio/SynthEngine';
+import AdvancedPanels from './AdvancedPanels.jsx';
 
 const initialState = {
   activeTab: 'OSC',
@@ -9,6 +10,7 @@ const initialState = {
   resonance: 0.8,
   filterType: 'lowpass',
   filterOn: true,
+  filterRouting: 'series',
   attack: 0.005,
   decay: 0.18,
   sustain: 0.7,
@@ -32,12 +34,26 @@ const initialState = {
   oscC: { on: true, wave: 'triangle', level: 0.34, octave: -1, scan: 0.62, density: 0.48, length: 0.32, pan: 0 },
   noise: { on: true, level: 0.22, pan: 0 },
   filter2: { on: false, filterType: 'lowpass', cutoff: 5200, resonance: 0.5 },
+  lfos: Array.from({ length: 10 }, (_, i) => ({ id: `LFO ${i + 1}`, on: i === 0, shape: i === 0 ? 'sine' : 'triangle', rate: i === 0 ? 2.2 : 1 + i * 0.5, depth: i === 0 ? 0.26 : 0.12 })),
+  envelopes: Array.from({ length: 4 }, (_, i) => ({ id: `ENV ${i + 1}`, attack: i === 0 ? 0.005 : 0.02, decay: 0.18, sustain: 0.7, release: 0.4, bpm: false, invert: false })),
+  matrix: [
+    { id: 1, source: 'LFO 1', destination: 'FILTER 1 CUTOFF', amount: 0.32, curve: 'bipolar' },
+    { id: 2, source: 'ENV 2', destination: 'OSC A WT POS', amount: 0.44, curve: 'linear' },
+    { id: 3, source: 'MACRO 1', destination: 'FX DELAY MIX', amount: 0.2, curve: 'linear' },
+  ],
+  mixer: ['OSC A', 'OSC B', 'OSC C', 'SUB', 'NOISE', 'FILTER 1', 'FILTER 2', 'FX BUS 1', 'FX BUS 2'].map((id, i) => ({ id, level: i < 5 ? 0.7 : 0.5, pan: 0, mute: false })),
+  tempo: 128,
+  arp: { mode: 'UP', rate: '1/16', octaves: 2, gate: 0.72 },
+  clip: { steps: Array.from({ length: 16 }, (_, i) => ({ id: i + 1, on: i % 4 !== 3, velocity: 0.45 + (i % 4) * 0.12, note: 0 })), length: 16 },
+  keyboard: { transpose: 0, scale: 'Major', swing: 0, mapping: ['A', 'B', 'C', 'SUB'] },
+  fxRouting: 'series', activeBus: 1, splitter: 'L/H', presetSearch: '',
+  effects: ['BODE', 'CHORUS', 'COMB', 'COMPRESSOR', 'CONVOLVE', 'DELAY', 'DISTORTION', 'EQ', 'FILTER', 'FLANGER', 'PHASER', 'REVERB', 'UTILITY'].map((type, i) => ({ id: i + 1, type, on: i === 5 || i === 6 || i === 11, bus: i % 2 + 1 })),
 };
 
 const clamp = (n, min = 0, max = 1) => Math.min(max, Math.max(min, n));
 const formatValue = (value, unit = '') => `${typeof value === 'number' ? (Math.abs(value) >= 100 ? Math.round(value) : value.toFixed(2)) : value}${unit}`;
 
-function Knob({ label, value, min = 0, max = 1, step = 0.01, onChange, color = 'cyan', valueText, compact = false }) {
+export function Knob({ label, value, min = 0, max = 1, step = 0.01, onChange, color = 'cyan', valueText, compact = false }) {
   const startRef = useRef(null);
   const pct = ((value - min) / (max - min)) * 270 - 135;
   const onPointerDown = (event) => {
@@ -83,7 +99,7 @@ function Knob({ label, value, min = 0, max = 1, step = 0.01, onChange, color = '
   );
 }
 
-function Toggle({ checked, onChange, label, tone = 'cyan' }) {
+export function Toggle({ checked, onChange, label, tone = 'cyan' }) {
   return <button className={`toggle ${checked ? `is-on tone-${tone}` : ''}`} onClick={() => onChange(!checked)} aria-pressed={checked} title={label}><span /></button>;
 }
 
@@ -94,6 +110,15 @@ function SectionTitle({ led = 'cyan', children, right }) {
 function WavePreview({ type = 'saw', color = 'lime' }) {
   const paths = { saw: 'M4 38 L28 7 L52 38 L76 7 L100 38', square: 'M4 37 L4 9 L33 9 L33 37 L63 37 L63 9 L96 9', triangle: 'M4 37 L28 8 L53 37 L77 8 L96 37', sine: 'M4 23 C15 2 27 2 39 23 S63 44 75 23 S87 2 96 23' };
   return <svg className={`wave-preview wave-${color}`} viewBox="0 0 100 46" preserveAspectRatio="none"><path d={paths[type] || paths.saw} /></svg>;
+}
+
+const KEY_OFFSETS = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+function transposeNote(note, semitones = 0) {
+  const match = /^([A-G])(#?)(-?\d+)$/.exec(note);
+  if (!match) return note;
+  const midi = (Number(match[3]) + 1) * 12 + KEY_OFFSETS[match[1]] + (match[2] ? 1 : 0) + semitones;
+  const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  return `${names[(midi + 1200) % 12]}${Math.floor(midi / 12) - 1}`;
 }
 
 function OscillatorCard({ name, state, onChange, accent = 'lime', wavetable = 'AT Furthrrrr Mood Symmetry', sub = false }) {
@@ -126,13 +151,13 @@ function FilterCard({ state, onChange, second = false }) {
   return <section className={`module filter-card ${!state.on ? 'module-off' : ''}`}>
     <div className="module-head"><div className="module-name"><Toggle checked={state.on} onChange={(v) => update('on', v)} label="Activar filtro" /><strong>FILTER {second ? '2' : '1'}</strong><span className="chip">{state.filterType === 'lowpass' ? 'MG LOW 12' : state.filterType.toUpperCase()}</span></div><span className="module-menu">⌄</span></div>
     <div className="filter-display"><div className="filter-curve" style={{ '--cutoff': `${Math.max(8, Math.min(94, Math.log(state.cutoff / 80) / Math.log(18000 / 80) * 88))}%` }} /><span>FILTER RESPONSE</span></div>
-    <div className="filter-types">{['lowpass', 'highpass', 'bandpass'].map((type) => <button key={type} className={state.filterType === type ? 'selected' : ''} onClick={() => update('filterType', type)}>{type === 'lowpass' ? 'LP' : type === 'highpass' ? 'HP' : 'BP'}</button>)}</div>
+    <div className="filter-types">{['lowpass', 'highpass', 'bandpass'].map((type) => <button key={type} className={state.filterType === type ? 'selected' : ''} onClick={() => update('filterType', type)}>{type === 'lowpass' ? 'LP' : type === 'highpass' ? 'HP' : 'BP'}</button>)}</div><div className="filter-types"><button className={(state.filterRouting || 'series') === 'series' ? 'selected' : ''} onClick={() => update('filterRouting', 'series')}>SERIES</button><button className={state.filterRouting === 'parallel' ? 'selected' : ''} onClick={() => update('filterRouting', 'parallel')}>PARALLEL</button></div>
     <div className="knob-grid filter-knobs"><Knob label="CUTOFF" value={state.cutoff} min={80} max={18000} step={10} onChange={(v) => update('cutoff', v)} color="cyan" valueText={`${Math.round(state.cutoff)} Hz`} compact /><Knob label="RES" value={state.resonance} max={20} step={0.1} onChange={(v) => update('resonance', v)} color="cyan" valueText={state.resonance.toFixed(1)} compact /><Knob label="DRIVE" value={state.filterDrive ?? 0.28} onChange={(v) => update('filterDrive', v)} color="muted" valueText={`${Math.round((state.filterDrive ?? 0.28) * 100)}`} compact /><Knob label="MIX" value={state.filterMix ?? 0.8} onChange={(v) => update('filterMix', v)} color="muted" valueText={`${Math.round((state.filterMix ?? 0.8) * 100)}`} compact /></div>
   </section>;
 }
 
 function ModPanel({ state, setState }) {
-  const update = (key, value) => setState((prev) => ({ ...prev, [key]: value }));
+  const update = (key, value) => setState((prev) => { const next = { ...prev, [key]: value }; if (key.startsWith('lfo')) { const lfo = { ...(prev.lfos?.[0] || {}), [key.slice(3).replace(/^./, (c) => c.toLowerCase())]: value }; if (key === 'lfoOn') lfo.on = value; if (key === 'lfoShape') lfo.shape = value; if (key === 'lfoRate') lfo.rate = value; if (key === 'lfoDepth') lfo.depth = value; next.lfos = [lfo, ...(prev.lfos || []).slice(1)]; } if (['attack', 'decay', 'sustain', 'release'].includes(key)) next.envelopes = [{ ...(prev.envelopes?.[0] || {}), [key]: value }, ...(prev.envelopes || []).slice(1)]; return next; });
   const updateMacro = (index, value) => setState((prev) => {
     const next = { ...prev, macro: prev.macro.map((item, i) => i === index ? value : item) };
     const assignments = [
@@ -157,39 +182,70 @@ function ModPanel({ state, setState }) {
 
 function EffectsRack({ state, setState }) {
   const update = (key, value) => setState((prev) => ({ ...prev, [key]: value }));
+  const updateEffect = (type, key, value) => setState((prev) => { const effectKey = { distortion: 'amount', delayMix: 'mix', delayTime: 'time', delayFeedback: 'feedback' }[key] || key; return { ...prev, [key]: value, effects: prev.effects.map((fx) => fx.type === type ? { ...fx, [effectKey]: value, on: key === 'distortionOn' || key === 'delayOn' ? value : fx.on } : fx) }; });
   return <section className="fx-rack">
     <div className="fx-rack-title"><span className="led led-cyan" /><strong>FX BUS</strong><span>REALTIME INSERTS · ROUTED AFTER FILTER 2</span></div>
-    <div className={`fx-module ${!state.distortionOn ? 'module-off' : ''}`}><div className="fx-module-head"><Toggle checked={state.distortionOn} onChange={(v) => update('distortionOn', v)} label="Activar distorsión" tone="cyan" /><strong>DISTORTION</strong><span className="chip">WAVESHAPER 4X</span></div><div className="fx-module-body"><div className="fx-graph distortion-graph"><span>SATURATION</span><i style={{ height: `${22 + state.distortion * 70}%` }} /></div><Knob label="DRIVE" value={state.distortion} onChange={(v) => update('distortion', v)} color="cyan" valueText={`${Math.round(state.distortion * 100)}`} compact /><Knob label="MIX" value={state.distortionOn ? 0.55 : 0} onChange={(v) => update('distortionOn', v > 0.01)} color="cyan" valueText="55" compact /></div></div>
-    <div className={`fx-module ${!state.delayOn ? 'module-off' : ''}`}><div className="fx-module-head"><Toggle checked={state.delayOn} onChange={(v) => update('delayOn', v)} label="Activar delay" tone="cyan" /><strong>DELAY</strong><span className="chip">FEEDBACK STEREO</span></div><div className="fx-module-body"><div className="fx-graph delay-graph"><span>TIME {Math.round(state.delayTime * 1000)} ms</span><i style={{ left: `${state.delayMix * 90}%` }} /></div><Knob label="MIX" value={state.delayMix} onChange={(v) => update('delayMix', v)} color="cyan" valueText={`${Math.round(state.delayMix * 100)}`} compact /><Knob label="TIME" value={state.delayTime} min={0.02} max={1.2} step={0.01} onChange={(v) => update('delayTime', v)} color="cyan" valueText={`${Math.round(state.delayTime * 1000)} ms`} compact /><Knob label="FDBK" value={state.delayFeedback} onChange={(v) => update('delayFeedback', v)} color="cyan" valueText={`${Math.round(state.delayFeedback * 100)}`} compact /></div></div>
+    <div className={`fx-module ${!state.distortionOn ? 'module-off' : ''}`}><div className="fx-module-head"><Toggle checked={state.distortionOn} onChange={(v) => updateEffect('DISTORTION', 'distortionOn', v)} label="Activar distorsión" tone="cyan" /><strong>DISTORTION</strong><span className="chip">WAVESHAPER 4X</span></div><div className="fx-module-body"><div className="fx-graph distortion-graph"><span>SATURATION</span><i style={{ height: `${22 + state.distortion * 70}%` }} /></div><Knob label="DRIVE" value={state.distortion} onChange={(v) => updateEffect('DISTORTION', 'distortion', v)} color="cyan" valueText={`${Math.round(state.distortion * 100)}`} compact /><Knob label="MIX" value={state.distortionOn ? 0.55 : 0} onChange={(v) => updateEffect('DISTORTION', 'distortionMix', v)} color="cyan" valueText="55" compact /></div></div>
+    <div className={`fx-module ${!state.delayOn ? 'module-off' : ''}`}><div className="fx-module-head"><Toggle checked={state.delayOn} onChange={(v) => updateEffect('DELAY', 'delayOn', v)} label="Activar delay" tone="cyan" /><strong>DELAY</strong><span className="chip">FEEDBACK STEREO</span></div><div className="fx-module-body"><div className="fx-graph delay-graph"><span>TIME {Math.round(state.delayTime * 1000)} ms</span><i style={{ left: `${state.delayMix * 90}%` }} /></div><Knob label="MIX" value={state.delayMix} onChange={(v) => updateEffect('DELAY', 'delayMix', v)} color="cyan" valueText={`${Math.round(state.delayMix * 100)}`} compact /><Knob label="TIME" value={state.delayTime} min={0.02} max={1.2} step={0.01} onChange={(v) => updateEffect('DELAY', 'delayTime', v)} color="cyan" valueText={`${Math.round(state.delayTime * 1000)} ms`} compact /><Knob label="FDBK" value={state.delayFeedback} onChange={(v) => updateEffect('DELAY', 'delayFeedback', v)} color="cyan" valueText={`${Math.round(state.delayFeedback * 100)}`} compact /></div></div>
   </section>;
 }
 
 function Piano({ engine, params }) {
   const [pressed, setPressed] = useState(new Set());
+  const activeNotes = useRef(new Map());
+  const arpTimers = useRef(new Map());
   const whiteNotes = ['C2', 'D2', 'E2', 'F2', 'G2', 'A2', 'B2', 'C3', 'D3', 'E3', 'F3', 'G3', 'A3', 'B3', 'C4', 'D4', 'E4', 'F4', 'G4', 'A4', 'B4', 'C5', 'D5', 'E5', 'F5', 'G5', 'A5', 'B5'];
   const blackOffsets = [0, 1, 3, 4, 5, 7, 8, 10, 11, 12, 14, 15, 17, 18, 19, 21, 22, 24, 25, 26];
-  const keyDown = useCallback((note) => { if (pressed.has(note)) return; setPressed((old) => new Set(old).add(note)); engine.trigger(note, 0.9, params); }, [engine, params, pressed]);
-  const keyUp = useCallback((note) => { setPressed((old) => { const next = new Set(old); next.delete(note); return next; }); engine.release(note); }, [engine]);
+  const keyDown = useCallback((note) => {
+    if (pressed.has(note)) return;
+    const playable = transposeNote(note, params.keyboard?.transpose || 0);
+    activeNotes.current.set(note, playable);
+    setPressed((old) => new Set(old).add(note));
+    engine.trigger(playable, 0.9, params);
+    if (params.arp?.mode && params.arp.mode !== 'OFF') {
+      const intervalMap = { '1/1': 1000, '1/2': 500, '1/4': 250, '1/8': 125, '1/16': 62.5 };
+      const stepMs = (60000 / (params.tempo || 128)) * (intervalMap[params.arp.rate] / 250);
+      const chord = params.arp.mode === 'CHORD' ? [0, 4, 7] : params.arp.mode === 'DOWN' ? [12, 7, 0] : [0, 7, 12];
+      let step = 0;
+      const timer = window.setInterval(() => { const arpNote = transposeNote(note, (params.keyboard?.transpose || 0) + chord[step % chord.length]); engine.trigger(arpNote, 0.72, params); window.setTimeout(() => engine.release(arpNote), Math.max(40, stepMs * (params.arp.gate || 0.72))); step += 1; }, Math.max(40, stepMs));
+      arpTimers.current.set(note, timer);
+    }
+  }, [engine, params, pressed]);
+  const keyUp = useCallback((note) => { setPressed((old) => { const next = new Set(old); next.delete(note); return next; }); const timer = arpTimers.current.get(note); if (timer) { window.clearInterval(timer); arpTimers.current.delete(note); } engine.release(activeNotes.current.get(note) || note); activeNotes.current.delete(note); }, [engine]);
   useEffect(() => () => { engine.panic(); }, [engine]);
-  return <div className="keyboard-shell"><div className="keyboard-labels"><span>CLIP</span><span>ARP</span><span>TRANSPOSE: <b>0</b></span><span>KEY: —</span><span>SCALE: Major</span><span>SWING: OFF</span></div><div className="piano" onPointerLeave={() => { pressed.forEach((note) => engine.release(note)); setPressed(new Set()); }}>{whiteNotes.map((note) => <button key={note} className={`white-key ${pressed.has(note) ? 'pressed' : ''}`} onPointerDown={() => keyDown(note)} onPointerUp={() => keyUp(note)} onPointerCancel={() => keyUp(note)}><span>{note.startsWith('C') ? note : ''}</span></button>)}{blackOffsets.map((whiteIndex) => { const note = whiteNotes[whiteIndex]; return <button key={`${note}-black`} className={`black-key ${pressed.has(note) ? 'pressed' : ''}`} style={{ left: `calc(${(whiteIndex + 1) * (100 / whiteNotes.length)}% - 8px)` }} onPointerDown={(e) => { e.stopPropagation(); keyDown(note); }} onPointerUp={() => keyUp(note)} onPointerCancel={() => keyUp(note)} aria-label={`Tecla negra ${note}`} />; })}</div></div>;
+  return <div className="keyboard-shell"><div className="keyboard-labels"><span>CLIP</span><span>ARP: {params.arp?.mode || 'OFF'}</span><span>TRANSPOSE: <b>{params.keyboard?.transpose || 0}</b></span><span>KEY: —</span><span>SCALE: {params.keyboard?.scale || 'Chromatic'}</span><span>SWING: {Math.round((params.keyboard?.swing || 0) * 100)}%</span></div><div className="piano" onPointerLeave={() => { pressed.forEach((note) => keyUp(note)); setPressed(new Set()); }}>{whiteNotes.map((note) => <button key={note} className={`white-key ${pressed.has(note) ? 'pressed' : ''}`} onPointerDown={() => keyDown(note)} onPointerUp={() => keyUp(note)} onPointerCancel={() => keyUp(note)}><span>{note.startsWith('C') ? note : ''}</span></button>)}{blackOffsets.map((whiteIndex) => { const note = whiteNotes[whiteIndex]; return <button key={`${note}-black`} className={`black-key ${pressed.has(note) ? 'pressed' : ''}`} style={{ left: `calc(${(whiteIndex + 1) * (100 / whiteNotes.length)}% - 8px)` }} onPointerDown={(e) => { e.stopPropagation(); keyDown(note); }} onPointerUp={() => keyUp(note)} onPointerCancel={() => keyUp(note)} aria-label={`Tecla negra ${note}`} />; })}</div></div>;
 }
 
 export default function App() {
   const [state, setState] = useState(initialState);
   const engine = useMemo(() => new SynthEngine(), []);
   const [status, setStatus] = useState('READY');
+  const historyRef = useRef({ past: [], future: [], last: JSON.stringify(initialState), restoring: false });
   useEffect(() => { engine.setParams(state); }, [engine, state]);
+  useEffect(() => {
+    const history = historyRef.current;
+    const snapshot = JSON.stringify(state);
+    if (history.restoring) { history.last = snapshot; history.restoring = false; return; }
+    if (snapshot !== history.last) {
+      history.past.push(JSON.parse(history.last));
+      if (history.past.length > 50) history.past.shift();
+      history.future = [];
+      history.last = snapshot;
+    }
+  }, [state]);
   const updateOsc = (key, value) => setState((prev) => ({ ...prev, [key]: value }));
   const setParam = (key, value) => setState((prev) => ({ ...prev, [key]: value }));
   const start = () => { engine.ensureContext(); setStatus('AUDIO ACTIVE'); };
   const savePreset = () => { localStorage.setItem('serum-lab-preset', JSON.stringify(state)); setStatus('PRESET SAVED'); setTimeout(() => setStatus('READY'), 1400); };
-  const loadPreset = () => { const saved = localStorage.getItem('serum-lab-preset'); if (saved) { setState(JSON.parse(saved)); setStatus('PRESET LOADED'); setTimeout(() => setStatus('READY'), 1400); } };
+  const loadPreset = () => { const saved = localStorage.getItem('serum-lab-preset'); if (!saved) return; try { setState({ ...initialState, ...JSON.parse(saved) }); setStatus('PRESET LOADED'); } catch { setStatus('PRESET ERROR'); } setTimeout(() => setStatus('READY'), 1400); };
+  const undo = () => { const history = historyRef.current; if (!history.past.length) return; history.future.push(state); history.restoring = true; setState(history.past.pop()); };
+  const redo = () => { const history = historyRef.current; if (!history.future.length) return; history.past.push(state); history.restoring = true; setState(history.future.pop()); };
   return <main className="app-shell">
     <header className="topbar">
       <div className="brand"><span>SERUM</span><em>2</em><small>LAB</small></div>
       <nav className="mode-tabs">{['OSC', 'MIX', 'FX', 'MATRIX', 'GLOBAL'].map((tab) => <button key={tab} className={state.activeTab === tab ? 'active' : ''} onClick={() => setParam('activeTab', tab)}><i />{tab}</button>)}</nav>
       <div className="preset"><button onClick={loadPreset} title="Cargar preset">▣</button><strong>{state.preset}</strong><span>ARTIST: <b>Endov Lane</b></span><button onClick={() => setParam('preset', state.preset === 'FX - Demon Woosh' ? 'INIT — Clean Slate' : 'FX - Demon Woosh')}>⌄</button></div>
-      <div className="top-actions"><button onClick={savePreset}>↶</button><button onClick={() => setState(initialState)}>↷</button><button onClick={start} className="menu-button">{status} ⌄</button><Knob label="MAIN" value={state.master} onChange={(v) => setParam('master', v)} color="cyan" valueText="" compact /></div>
+      <div className="top-actions"><button onClick={undo} title="Undo">↶</button><button onClick={redo} title="Redo">↷</button><button onClick={savePreset} title="Guardar preset">SAVE</button><button onClick={start} className="menu-button">{status} ⌄</button><Knob label="MAIN" value={state.master} onChange={(v) => setParam('master', v)} color="cyan" valueText="" compact /></div>
     </header>
     <div className="subnav"><span className="session-dot" /> {status === 'AUDIO ACTIVE' ? 'AudioContext online · polyphony 32' : 'Click MAIN o toca el teclado para iniciar audio'}<span className="meter"><i style={{ height: `${18 + state.master * 42}%` }} /><i style={{ height: `${10 + state.lfoDepth * 60}%` }} /></span></div>
     <div className="upper-grid">
@@ -202,6 +258,7 @@ export default function App() {
       <FilterCard state={state.filter2} onChange={(v) => updateOsc('filter2', v)} second />
     </div>
     <ModPanel state={state} setState={setState} />
+    <AdvancedPanels state={state} setState={setState} engine={engine} />
     <EffectsRack state={state} setState={setState} />
     <div className="bottom-strip"><div className="pitch-wheels"><div className="wheel"><span>PITCH</span><i style={{ top: '35%' }} /></div><div className="wheel"><span>MOD</span><i style={{ top: `${60 - state.lfoDepth * 30}%` }} /></div></div><Piano engine={engine} params={state} /><div className="engine-badge"><strong>SERUM 2 ENGINE</strong><span>DSP 96kHz · 64-BIT</span><button onClick={() => engine.panic()}>PANIC</button></div></div>
     <footer className="footer-note"><span>Serum Lab / React component playground</span><span><b>Web Audio API</b> · LFO modulation · waveshaper distortion · feedback delay</span></footer>
