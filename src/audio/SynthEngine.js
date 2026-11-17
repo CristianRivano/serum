@@ -145,6 +145,7 @@ export class SynthEngine {
 
   configureFx(params) {
     if (!this.ctx || !this.nodes) return;
+    const ctx = this.ctx;
     const n = this.nodes;
     n.fx.forEach((fx) => fx.nodes.modulators?.forEach((mod) => { try { mod.stop(); } catch { /* stopped */ } }));
     n.fx = [];
