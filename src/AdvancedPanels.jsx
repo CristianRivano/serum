@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Knob, Toggle } from './App.jsx';
 
 const FX_TYPES = ['BODE', 'CHORUS', 'COMB', 'COMPRESSOR', 'CONVOLVE', 'DELAY', 'DISTORTION', 'EQ', 'FILTER', 'FLANGER', 'PHASER', 'REVERB', 'UTILITY'];
@@ -9,10 +9,48 @@ const MOD_DESTINATIONS = ['OSC A WT POS', 'OSC A FM', 'OSC B LEVEL', 'OSC C SCAN
 function Panel({ title, children, right }) { return <section className="advanced-panel"><div className="advanced-head"><strong>{title}</strong>{right && <span>{right}</span>}</div>{children}</section>; }
 function Select({ value, onChange, children }) { return <select className="advanced-select" value={value} onChange={(e) => onChange(e.target.value)}>{children}</select>; }
 
+function AudioFileLoader({ engine }) {
+  const inputRef = useRef(null);
+  const [status, setStatus] = useState('Ningún archivo cargado');
+  const [dragging, setDragging] = useState(false);
+
+  const loadFile = async (file) => {
+    if (!file) return;
+    const isAudio = file.type.startsWith('audio/') || /\.(wav|mp3|ogg|flac|m4a|aac|aiff?)$/i.test(file.name);
+    if (!isAudio) {
+      setStatus('Selecciona un archivo de audio válido (WAV, MP3, OGG, FLAC o M4A).');
+      return;
+    }
+    setStatus(`Cargando ${file.name}…`);
+    try {
+      const duration = await engine.loadSample(await file.arrayBuffer(), 'sample');
+      setStatus(`Cargado: ${file.name} · ${duration.toFixed(2)} s`);
+    } catch {
+      setStatus('No se pudo leer el audio. Prueba con WAV, MP3, OGG, FLAC o M4A.');
+    } finally {
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  };
+
+  const openPicker = () => inputRef.current?.click();
+  const handleDrop = (event) => {
+    event.preventDefault();
+    setDragging(false);
+    loadFile(event.dataTransfer.files?.[0]);
+  };
+
+  return <div className={`sample-loader ${dragging ? 'is-dragging' : ''}`} onDragOver={(event) => { event.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={handleDrop} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openPicker(); } }} tabIndex={0} role="group" aria-label="Cargar archivo de audio">
+    <div className="sample-loader-copy"><strong>CARGAR AUDIO</strong><span>Arrastra un archivo aquí o selecciónalo desde tu dispositivo.</span><small>WAV · MP3 · OGG · FLAC · M4A · AAC</small></div>
+    <button type="button" className="audio-pick-button" onClick={openPicker}>Seleccionar archivo</button>
+    <input ref={inputRef} className="audio-input" type="file" accept="audio/*,.wav,.mp3,.ogg,.flac,.m4a,.aac" onChange={(event) => loadFile(event.target.files?.[0])} />
+    <span className="sample-loader-status" role="status" aria-live="polite">{status}</span>
+  </div>;
+}
+
 function OscillatorModes({ state, setState, engine }) {
   const setMode = (key, mode) => setState((p) => ({ ...p, [key]: { ...p[key], mode } }));
   return <Panel title="ADVANCED OSCILLATOR MODES" right="3 PRIMARY OSCILLATORS · 5 ENGINES">
-    <div className="advanced-grid osc-mode-grid">{['oscA', 'oscB', 'oscC'].map((key, index) => <div className="advanced-card" key={key}><div className="advanced-card-title"><span className="led led-lime" /><strong>{key.toUpperCase()}</strong><span className="chip">{state[key]?.mode || 'wavetable'}</span></div><div className="mode-buttons">{['wavetable', 'sample', 'multisample', 'granular', 'spectral'].map((mode) => <button key={mode} className={(state[key]?.mode || 'wavetable') === mode ? 'selected' : ''} onClick={() => setMode(key, mode)}>{mode}</button>)}</div><div className="advanced-knobs"><Knob label="PHASE" value={state[key]?.phase ?? 0.5} onChange={(v) => setState((p) => ({ ...p, [key]: { ...p[key], phase: v } }))} valueText={`${Math.round((state[key]?.phase ?? 0.5) * 360)}°`} compact /><Knob label="WARP 1" value={state[key]?.warp1 ?? 0.2} onChange={(v) => setState((p) => ({ ...p, [key]: { ...p[key], warp1: v } }))} valueText={`${Math.round((state[key]?.warp1 ?? 0.2) * 100)}`} compact /><Knob label="WARP 2" value={state[key]?.warp2 ?? 0.35} onChange={(v) => setState((p) => ({ ...p, [key]: { ...p[key], warp2: v } }))} valueText={`${Math.round((state[key]?.warp2 ?? 0.35) * 100)}`} compact /></div><div className="warp-row"><Select value={state[key]?.warpType || 'FM'} onChange={(warpType) => setState((p) => ({ ...p, [key]: { ...p[key], warpType } }))}>{['FM', 'PM', 'PD', 'RING', 'DISTORT', 'OFF'].map((x) => <option key={x}>{x}</option>)}</Select><label><input type="checkbox" checked={state[key]?.phaseMemory ?? true} onChange={(e) => setState((p) => ({ ...p, [key]: { ...p[key], phaseMemory: e.target.checked } }))} /> PHASE MEMORY</label></div></div>)}</div><div className="sample-loader"><label>LOAD SAMPLE / MULTISAMPLE <input type="file" accept="audio/*,.sfz" onChange={async (e) => { const file = e.target.files?.[0]; if (file && engine) await engine.loadSample(await file.arrayBuffer(), file.name.endsWith('.sfz') ? 'multisample' : 'sample'); }} /></label><span>Sample playback, granular looping and spectral band resynthesis use Web Audio buffers.</span></div>
+    <div className="advanced-grid osc-mode-grid">{['oscA', 'oscB', 'oscC'].map((key, index) => <div className="advanced-card" key={key}><div className="advanced-card-title"><span className="led led-lime" /><strong>{key.toUpperCase()}</strong><span className="chip">{state[key]?.mode || 'wavetable'}</span></div><div className="mode-buttons">{['wavetable', 'sample', 'multisample', 'granular', 'spectral'].map((mode) => <button key={mode} className={(state[key]?.mode || 'wavetable') === mode ? 'selected' : ''} onClick={() => setMode(key, mode)}>{mode}</button>)}</div><div className="advanced-knobs"><Knob label="PHASE" value={state[key]?.phase ?? 0.5} onChange={(v) => setState((p) => ({ ...p, [key]: { ...p[key], phase: v } }))} valueText={`${Math.round((state[key]?.phase ?? 0.5) * 360)}°`} compact /><Knob label="WARP 1" value={state[key]?.warp1 ?? 0.2} onChange={(v) => setState((p) => ({ ...p, [key]: { ...p[key], warp1: v } }))} valueText={`${Math.round((state[key]?.warp1 ?? 0.2) * 100)}`} compact /><Knob label="WARP 2" value={state[key]?.warp2 ?? 0.35} onChange={(v) => setState((p) => ({ ...p, [key]: { ...p[key], warp2: v } }))} valueText={`${Math.round((state[key]?.warp2 ?? 0.35) * 100)}`} compact /></div><div className="warp-row"><Select value={state[key]?.warpType || 'FM'} onChange={(warpType) => setState((p) => ({ ...p, [key]: { ...p[key], warpType } }))}>{['FM', 'PM', 'PD', 'RING', 'DISTORT', 'OFF'].map((x) => <option key={x}>{x}</option>)}</Select><label><input type="checkbox" checked={state[key]?.phaseMemory ?? true} onChange={(e) => setState((p) => ({ ...p, [key]: { ...p[key], phaseMemory: e.target.checked } }))} /> PHASE MEMORY</label></div></div>)}</div><AudioFileLoader engine={engine} />
   </Panel>;
 }
 

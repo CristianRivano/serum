@@ -82,11 +82,13 @@ export function Knob({ label, value, min = 0, max = 1, step = 0.01, onChange, co
         aria-valuemin={min}
         aria-valuemax={max}
         aria-valuenow={value}
+        aria-orientation="vertical"
         tabIndex={0}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
+        onLostPointerCapture={onPointerUp}
         onWheel={onWheel}
         onKeyDown={(event) => {
           if (event.key === 'ArrowUp' || event.key === 'ArrowRight') onChange(Math.min(max, value + step));
@@ -213,7 +215,7 @@ function Piano({ engine, params }) {
   }, [engine, params, pressed]);
   const keyUp = useCallback((note) => { setPressed((old) => { const next = new Set(old); next.delete(note); return next; }); const timer = arpTimers.current.get(note); if (timer) { window.clearInterval(timer); arpTimers.current.delete(note); } engine.release(activeNotes.current.get(note) || note); activeNotes.current.delete(note); }, [engine]);
   useEffect(() => () => { engine.panic(); }, [engine]);
-  return <div className="keyboard-shell"><div className="keyboard-labels"><span>CLIP</span><span>ARP: {params.arp?.mode || 'OFF'}</span><span>TRANSPOSE: <b>{params.keyboard?.transpose || 0}</b></span><span>KEY: —</span><span>SCALE: {params.keyboard?.scale || 'Chromatic'}</span><span>SWING: {Math.round((params.keyboard?.swing || 0) * 100)}%</span></div><div className="piano" onPointerLeave={() => { pressed.forEach((note) => keyUp(note)); setPressed(new Set()); }}>{whiteNotes.map((note) => <button key={note} className={`white-key ${pressed.has(note) ? 'pressed' : ''}`} onPointerDown={() => keyDown(note)} onPointerUp={() => keyUp(note)} onPointerCancel={() => keyUp(note)}><span>{note.startsWith('C') ? note : ''}</span></button>)}{blackOffsets.map((whiteIndex) => { const note = whiteNotes[whiteIndex]; return <button key={`${note}-black`} className={`black-key ${pressed.has(note) ? 'pressed' : ''}`} style={{ left: `calc(${(whiteIndex + 1) * (100 / whiteNotes.length)}% - 8px)` }} onPointerDown={(e) => { e.stopPropagation(); keyDown(note); }} onPointerUp={() => keyUp(note)} onPointerCancel={() => keyUp(note)} aria-label={`Tecla negra ${note}`} />; })}</div></div>;
+  return <div className="keyboard-shell"><div className="keyboard-labels"><span>CLIP</span><span>ARP: {params.arp?.mode || 'OFF'}</span><span>TRANSPOSE: <b>{params.keyboard?.transpose || 0}</b></span><span>KEY: —</span><span>SCALE: {params.keyboard?.scale || 'Chromatic'}</span><span>SWING: {Math.round((params.keyboard?.swing || 0) * 100)}%</span></div><div className="piano" onPointerLeave={() => { pressed.forEach((note) => keyUp(note)); setPressed(new Set()); }} onContextMenu={(event) => event.preventDefault()}>{whiteNotes.map((note) => <button key={note} className={`white-key ${pressed.has(note) ? 'pressed' : ''}`} onPointerDown={(event) => { event.preventDefault(); keyDown(note); }} onPointerUp={() => keyUp(note)} onPointerCancel={() => keyUp(note)}><span>{note.startsWith('C') ? note : ''}</span></button>)}{blackOffsets.map((whiteIndex) => { const note = whiteNotes[whiteIndex]; return <button key={`${note}-black`} className={`black-key ${pressed.has(note) ? 'pressed' : ''}`} style={{ left: `calc(${(whiteIndex + 1) * (100 / whiteNotes.length)}% - 8px)` }} onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); keyDown(note); }} onPointerUp={() => keyUp(note)} onPointerCancel={() => keyUp(note)} aria-label={`Tecla negra ${note}`} />; })}</div></div>;
 }
 
 export default function App() {
