@@ -14,6 +14,6 @@
 - [x] Rack FX con los 13 tipos de efectos: Bode, Chorus, Comb, Compressor, Convolve, Delay, Distortion, EQ, Filter, Flanger, Phaser, Reverb y Utility.
 - [x] Interfaz oscura inspirada en Serum 2, responsive y visualmente coherente.
 - [x] Build Vite validada, rutas declaradas en manus-routes.json y diagnósticos JavaScript/CSS/JSON registrados.
-- [ ] Biblioteca de presets y sonidos predefinidos con búsqueda, categorías, descripciones y carga instantánea de parámetros sonoros.
-- [ ] Optimización de controles y layout para dispositivos móviles y pantallas táctiles.
-- [ ] Verificación de la versión publicada en `https://rivano.click/serum/` después del despliegue.
+- [x] Biblioteca de presets y sonidos predefinidos con búsqueda, categorías, descripciones y carga instantánea de parámetros sonoros.
+- [x] Optimización de controles y layout para dispositivos móviles y pantallas táctiles.
+- [x] Verificación de la versión publicada en `https://rivano.click/serum/` después del despliegue.
